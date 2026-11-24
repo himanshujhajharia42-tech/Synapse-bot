@@ -1,50 +1,63 @@
 require("dotenv").config();
-const http = require("http");
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
-
-let botStatus = "waiting_for_token";
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ app: "HANU Discord Bot", status: botStatus }));
-});
-server.listen(process.env.PORT || 3000, () => console.log("HANU bot health endpoint ready"));
-
-const token = process.env.DISCORD_BOT_TOKEN;
-if (!token) {
-  console.error("DISCORD_BOT_TOKEN is missing. Add it in the Render service environment settings.");
-} else {
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-  const commands = [
-    new SlashCommandBuilder().setName("ping").setDescription("Check HANU latency"),
-    new SlashCommandBuilder().setName("serverinfo").setDescription("Show this server's information"),
-    new SlashCommandBuilder().setName("help").setDescription("Show HANU's starter commands")
-  ].map(c => c.toJSON());
-
-  client.once("ready", async () => {
-    botStatus = "online";
-    console.log(`HANU online as ${client.user.tag}`);
-    try {
-      await new REST({ version: "10" }).setToken(token).put(Routes.applicationCommands(client.user.id), { body: commands });
-      console.log("Registered starter slash commands.");
-    } catch (e) { console.error("Command registration failed:", e); }
-  });
-  client.on("error", e => console.error("Discord client error:", e));
-  client.on("shardDisconnect", () => { botStatus = "reconnecting"; });
-  client.on("shardResume", () => { botStatus = "online"; });
-
-  client.on("interactionCreate", async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-    if (interaction.commandName === "ping") return interaction.reply({ content: `Pong! ${client.ws.ping}ms`, ephemeral: true });
-    if (interaction.commandName === "help") return interaction.reply({ content: "**HANU starter commands**\n/ping — latency\n/serverinfo — server details\n/help — this message", ephemeral: true });
-    if (interaction.commandName === "serverinfo") return interaction.reply({ content: `**${interaction.guild.name}**\nMembers: ${interaction.guild.memberCount}\nCreated: <t:${Math.floor(interaction.guild.createdTimestamp / 1000)}:D>`, ephemeral: true });
-  });
-  client.on("messageCreate", async message => {
-    if (message.author.bot || !message.guild) return;
-    const prefix = process.env.BOT_PREFIX || "hanu";
-    if (!message.content.toLowerCase().startsWith(prefix + " ")) return;
-    const [command] = message.content.slice(prefix.length).trim().toLowerCase().split(/\s+/);
-    if (command === "ping") message.reply(`Pong! ${client.ws.ping}ms`);
-    else if (command === "help") message.reply("HANU starter commands: `hanu ping`, `hanu help`. More modules are being built.");
-  });
-  client.login(token).catch(e => { botStatus = "login_error"; console.error("Discord login failed:", e); });
+const http=require("http");
+const {Client,GatewayIntentBits,REST,Routes,SlashCommandBuilder,PermissionFlagsBits,ChannelType,ActionRowBuilder,ButtonBuilder,ButtonStyle,EmbedBuilder}=require("discord.js");
+let status="starting";
+http.createServer((_q,r)=>{r.writeHead(200,{"content-type":"application/json"});r.end(JSON.stringify({app:"HANU Discord Bot",status}));}).listen(process.env.PORT||3000,()=>console.log("HANU bot health endpoint ready"));
+const token=process.env.DISCORD_BOT_TOKEN, prefix=process.env.BOT_PREFIX||"hanu";
+const warnings=new Map(),staffRoles=new Map();
+const commands=[
+new SlashCommandBuilder().setName("ping").setDescription("Check HANU latency"),
+new SlashCommandBuilder().setName("help").setDescription("Show HANU commands"),
+new SlashCommandBuilder().setName("serverinfo").setDescription("Show server information"),
+new SlashCommandBuilder().setName("userinfo").setDescription("Show member information").addUserOption(o=>o.setName("user").setDescription("Member")),
+new SlashCommandBuilder().setName("ban").setDescription("Ban a member").setDefaultMemberPermissions(PermissionFlagsBits.BanMembers).addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason").setMaxLength(400)),
+new SlashCommandBuilder().setName("kick").setDescription("Kick a member").setDefaultMemberPermissions(PermissionFlagsBits.KickMembers).addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason").setMaxLength(400)),
+new SlashCommandBuilder().setName("timeout").setDescription("Timeout a member").setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)).addIntegerOption(o=>o.setName("minutes").setDescription("1 to 40320 minutes").setMinValue(1).setMaxValue(40320).setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason").setMaxLength(400)),
+new SlashCommandBuilder().setName("untimeout").setDescription("Remove a timeout").setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)),
+new SlashCommandBuilder().setName("warn").setDescription("Warn a member").setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason").setRequired(true).setMaxLength(400)),
+new SlashCommandBuilder().setName("warnings").setDescription("View session warnings").setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers).addUserOption(o=>o.setName("user").setDescription("Member").setRequired(true)),
+new SlashCommandBuilder().setName("purge").setDescription("Delete recent messages").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages).addIntegerOption(o=>o.setName("amount").setDescription("1 to 100").setMinValue(1).setMaxValue(100).setRequired(true)),
+new SlashCommandBuilder().setName("lock").setDescription("Lock this channel").setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+new SlashCommandBuilder().setName("unlock").setDescription("Unlock this channel").setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+new SlashCommandBuilder().setName("slowmode").setDescription("Set slowmode").setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels).addIntegerOption(o=>o.setName("seconds").setDescription("0 to 21600").setMinValue(0).setMaxValue(21600).setRequired(true)),
+new SlashCommandBuilder().setName("ticket-panel").setDescription("Post a ticket panel").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addStringOption(o=>o.setName("title").setDescription("Panel title").setMaxLength(200)).addStringOption(o=>o.setName("description").setDescription("Panel text").setMaxLength(1000)).addRoleOption(o=>o.setName("staff-role").setDescription("Ticket staff role")),
+new SlashCommandBuilder().setName("ticket-claim").setDescription("Claim this ticket").setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+new SlashCommandBuilder().setName("ticket-close").setDescription("Close this ticket"),
+new SlashCommandBuilder().setName("poll").setDescription("Create a yes/no poll").addStringOption(o=>o.setName("question").setDescription("Question").setRequired(true).setMaxLength(800)),
+new SlashCommandBuilder().setName("announce").setDescription("Post an announcement").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages).addStringOption(o=>o.setName("title").setDescription("Title").setRequired(true).setMaxLength(200)).addStringOption(o=>o.setName("message").setDescription("Message").setRequired(true).setMaxLength(3000)),
+new SlashCommandBuilder().setName("giveaway").setDescription("Start a giveaway").setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).addStringOption(o=>o.setName("prize").setDescription("Prize").setRequired(true).setMaxLength(200)).addIntegerOption(o=>o.setName("minutes").setDescription("Duration, 1 to 10080 minutes").setMinValue(1).setMaxValue(10080).setRequired(true))
+].map(c=>c.toJSON());
+const metaFor=c=>{const m=(c.topic||"").match(/^hanu-ticket:(\d+):(\d+)$/);return m?{owner:m[1],role:m[2]==="0"?null:m[2]}:null;};
+const hasRole=(m,id)=>Boolean(id&&m?.roles?.cache?.has(id));
+async function closeTicket(i){const m=metaFor(i.channel);if(!m)return i.reply({content:"This is not a HANU ticket.",ephemeral:true});if(i.user.id!==m.owner&&!i.memberPermissions?.has(PermissionFlagsBits.ManageChannels)&&!hasRole(i.member,m.role))return i.reply({content:"Only the ticket owner or ticket staff can close this.",ephemeral:true});await i.channel.permissionOverwrites.edit(m.owner,{SendMessages:false});await i.channel.setName(("closed-"+i.channel.name).slice(0,100)).catch(()=>{});return i.reply({content:"Ticket closed. Staff can review it and delete it when finished."});}
+if(!token){status="waiting_for_token";console.error("DISCORD_BOT_TOKEN is missing.");}
+else{
+const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent]});
+client.once("ready",async()=>{status="online";console.log("HANU online as "+client.user.tag);try{await new REST({version:"10"}).setToken(token).put(Routes.applicationCommands(client.user.id),{body:commands});console.log("Registered "+commands.length+" HANU slash commands.");}catch(e){console.error("Command registration failed:",e);}});
+client.on("error",e=>console.error("Discord client error:",e));client.on("shardDisconnect",()=>status="reconnecting");client.on("shardResume",()=>status="online");
+client.on("interactionCreate",async i=>{try{
+if(i.isButton()){
+if(i.customId==="hanu:ticket:create"){const old=i.guild.channels.cache.find(c=>c.type===ChannelType.GuildText&&c.topic?.startsWith("hanu-ticket:"+i.user.id+":"));if(old)return i.reply({content:"You already have a ticket: "+old,ephemeral:true});const role=staffRoles.get(i.guildId)||null;const ow=[{id:i.guild.roles.everyone.id,deny:[PermissionFlagsBits.ViewChannel]},{id:i.user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},{id:client.user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ManageChannels,PermissionFlagsBits.ReadMessageHistory]}];if(role)ow.push({id:role,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});const ch=await i.guild.channels.create({name:("ticket-"+i.user.username).toLowerCase().replace(/[^a-z0-9-]/g,"").slice(0,85),type:ChannelType.GuildText,topic:"hanu-ticket:"+i.user.id+":"+(role||"0"),permissionOverwrites:ow});const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("hanu:ticket:close").setLabel("Close ticket").setStyle(ButtonStyle.Danger));await ch.send({content:i.user+(role?" <@&"+role+">":"")+" Welcome! Describe your issue here.",components:[row]});return i.reply({content:"Ticket created: "+ch,ephemeral:true});}
+if(i.customId==="hanu:ticket:close")return closeTicket(i);
+}
+if(!i.isChatInputCommand())return;const c=i.commandName,g=i.guild;
+if(c!=="ping"&&c!=="help"&&!g)return i.reply({content:"Use this command in a server.",ephemeral:true});
+if(c==="ping")return i.reply({content:"Pong! "+client.ws.ping+"ms",ephemeral:true});
+if(c==="help")return i.reply({content:"**HANU commands**\\nInfo: /ping /help /serverinfo /userinfo\\nModeration: /ban /kick /timeout /untimeout /warn /warnings /purge /lock /unlock /slowmode\\nTickets: /ticket-panel /ticket-claim /ticket-close\\nCommunity: /poll /giveaway /announce\\nWarning records and giveaway timers are temporary and reset when the bot restarts.",ephemeral:true});
+if(c==="serverinfo")return i.reply({embeds:[new EmbedBuilder().setColor(0x8278ff).setTitle(g.name).setThumbnail(g.iconURL()).addFields({name:"Members",value:String(g.memberCount),inline:true},{name:"Created",value:"<t:"+Math.floor(g.createdTimestamp/1000)+":D>",inline:true},{name:"Owner",value:"<@"+g.ownerId+">",inline:true})],ephemeral:true});
+if(c==="userinfo"){const u=i.options.getUser("user")||i.user,m=await g.members.fetch(u.id).catch(()=>null);return i.reply({embeds:[new EmbedBuilder().setColor(0x54d9e8).setTitle(u.tag).setThumbnail(u.displayAvatarURL()).addFields({name:"User ID",value:u.id,inline:true},{name:"Joined",value:m?.joinedTimestamp?"<t:"+Math.floor(m.joinedTimestamp/1000)+":R>":"Unknown",inline:true},{name:"Account created",value:"<t:"+Math.floor(u.createdTimestamp/1000)+":R>",inline:true})],ephemeral:true});}
+if(["ban","kick","timeout","untimeout","warn"].includes(c)){const u=i.options.getUser("user",true),reason=i.options.getString("reason")||"No reason provided",m=await g.members.fetch(u.id).catch(()=>null);if(!m)return i.reply({content:"That member is not in this server.",ephemeral:true});if(u.id===i.user.id||u.id===g.ownerId)return i.reply({content:"That member cannot be moderated with this command.",ephemeral:true});if(c==="ban"){await m.ban({reason:reason+" | Moderator: "+i.user.tag});return i.reply({content:"Banned "+u.tag+". Reason: "+reason});}if(c==="kick"){await m.kick(reason+" | Moderator: "+i.user.tag);return i.reply({content:"Kicked "+u.tag+". Reason: "+reason});}if(c==="timeout"){const n=i.options.getInteger("minutes",true);await m.timeout(n*60000,reason);return i.reply({content:"Timed out "+u.tag+" for "+n+" minutes. Reason: "+reason});}if(c==="untimeout"){await m.timeout(null,"Timeout removed by "+i.user.tag);return i.reply({content:"Timeout removed for "+u.tag+"."});}const k=g.id+":"+u.id,a=warnings.get(k)||[];a.push({reason,by:i.user.tag});warnings.set(k,a);return i.reply({content:"Warned "+u.tag+". Session warnings: "+a.length+". Reason: "+reason});}
+if(c==="warnings"){const u=i.options.getUser("user",true),a=warnings.get(g.id+":"+u.id)||[];return i.reply({content:a.length?"**Warnings for "+u.tag+"**\\n"+a.map((w,n)=>(n+1)+". "+w.reason+" — "+w.by).join("\\n"):"No session warnings for "+u.tag+".",ephemeral:true});}
+if(c==="purge"){const n=i.options.getInteger("amount",true),d=await i.channel.bulkDelete(n,true);return i.reply({content:"Deleted "+d.size+" messages.",ephemeral:true});}
+if(c==="lock"||c==="unlock"){const locked=c==="lock";await i.channel.permissionOverwrites.edit(g.roles.everyone,{SendMessages:locked?false:null});return i.reply({content:locked?"Channel locked.":"Channel unlocked."});}
+if(c==="slowmode"){const n=i.options.getInteger("seconds",true);await i.channel.setRateLimitPerUser(n);return i.reply({content:"Slowmode set to "+n+" seconds."});}
+if(c==="ticket-panel"){const title=i.options.getString("title")||"Support tickets",desc=i.options.getString("description")||"Need help? Press below to open a private support ticket.",role=i.options.getRole("staff-role");if(role)staffRoles.set(g.id,role.id);const embed=new EmbedBuilder().setColor(0x8278ff).setTitle(title).setDescription(desc).setFooter({text:"Powered by HANU"}),row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("hanu:ticket:create").setLabel("Create ticket").setEmoji("🎫").setStyle(ButtonStyle.Primary));await i.channel.send({embeds:[embed],components:[row]});return i.reply({content:"Ticket panel posted.",ephemeral:true});}
+if(c==="ticket-claim"){const m=metaFor(i.channel);if(!m)return i.reply({content:"This is not a HANU ticket.",ephemeral:true});if(!i.memberPermissions.has(PermissionFlagsBits.ManageChannels)&&!hasRole(i.member,m.role))return i.reply({content:"Only ticket staff can claim this.",ephemeral:true});await i.channel.send("Ticket claimed by "+i.user+".");return i.reply({content:"Ticket claimed.",ephemeral:true});}
+if(c==="ticket-close")return closeTicket(i);
+if(c==="poll"){const q=i.options.getString("question",true),msg=await i.channel.send({embeds:[new EmbedBuilder().setColor(0x54d9e8).setTitle("Poll: "+q).setDescription("👍 Yes\\n👎 No").setFooter({text:"Poll by "+i.user.tag})]});await msg.react("👍");await msg.react("👎");return i.reply({content:"Poll created: "+msg.url,ephemeral:true});}
+if(c==="announce"){const title=i.options.getString("title",true),msg=i.options.getString("message",true);await i.channel.send({embeds:[new EmbedBuilder().setColor(0x8278ff).setTitle(title).setDescription(msg).setFooter({text:"Announcement by "+i.user.tag}).setTimestamp()]});return i.reply({content:"Announcement posted.",ephemeral:true});}
+if(c==="giveaway"){const prize=i.options.getString("prize",true),mins=i.options.getInteger("minutes",true),end=Date.now()+mins*60000,msg=await i.channel.send({embeds:[new EmbedBuilder().setColor(0x54d9e8).setTitle("Giveaway: "+prize).setDescription("React with 🎉 to enter.\\nEnds <t:"+Math.floor(end/1000)+":R>")]});await msg.react("🎉");setTimeout(async()=>{try{const f=await msg.fetch(),r=f.reactions.cache.get("🎉"),us=r?await r.users.fetch():null,entries=us?us.filter(x=>!x.bot).map(x=>x):[],winner=entries.length?entries[Math.floor(Math.random()*entries.length)]:null;await i.channel.send(winner?"Congratulations "+winner+"! You won **"+prize+"**!":"Giveaway ended with no entries.");}catch(e){console.error("Giveaway finish:",e);}},mins*60000);return i.reply({content:"Giveaway started: "+msg.url,ephemeral:true});}
+}catch(e){console.error("Command error:",e);const msg="Action failed. Check HANU's channel permissions and your command permissions.";if(i.replied||i.deferred)await i.followUp({content:msg,ephemeral:true}).catch(()=>{});else await i.reply({content:msg,ephemeral:true}).catch(()=>{});}});
+client.on("messageCreate",m=>{if(m.author.bot||!m.guild||!m.content.toLowerCase().startsWith(prefix.toLowerCase()+" "))return;const cmd=m.content.slice(prefix.length).trim().toLowerCase().split(/\\s+/)[0];if(cmd==="ping")m.reply("Pong! "+client.ws.ping+"ms");if(cmd==="help")m.reply("Use /help to see HANU slash commands. Prefix: "+prefix+".");});
+client.login(token).catch(e=>{status="login_error";console.error("Discord login failed:",e);});
 }
