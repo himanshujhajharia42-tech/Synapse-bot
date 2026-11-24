@@ -33,18 +33,34 @@ planned:{title:"More modules",intro:"These modules are not active yet. They will
 function renderPage(){
 const d=data[page]||data.overview;$("pageTitle").textContent=d.title;
 let out='<p class="muted">'+d.intro+'</p>';
+if(page==="tickets"){out+='<div class="card"><h3>Ticket panel designer</h3><p class="muted">Edit the panel style here, save it, then run /ticket-panel in your Discord server to publish it.</p><label>Panel title</label><input id="panelTitle" maxlength="200" style="display:block;width:100%;margin:7px 0 14px;padding:12px;border-radius:9px;background:#0e1320;color:white;border:1px solid var(--line)"><label>Description</label><textarea id="panelDescription" maxlength="1000" rows="4" style="display:block;width:100%;margin:7px 0 14px;padding:12px;border-radius:9px;background:#0e1320;color:white;border:1px solid var(--line)"></textarea><label>Button label</label><input id="buttonLabel" maxlength="80" style="display:block;width:100%;margin:7px 0 14px;padding:12px;border-radius:9px;background:#0e1320;color:white;border:1px solid var(--line)"><label>Embed colour</label><input id="panelColor" type="color" value="#8278ff" style="display:block;margin:8px 0 14px"><label>Staff role ID (optional)</label><input id="staffRoleId" inputmode="numeric" placeholder="Discord role ID" style="display:block;width:100%;margin:7px 0 14px;padding:12px;border-radius:9px;background:#0e1320;color:white;border:1px solid var(--line)"><button class="btn" id="savePanel">Save panel design</button><p id="savePanelMsg" class="muted"></p></div><h3 class="section-title">Ticket analytics</h3><div id="ticketStats" class="muted">Loading analytics…</div><div class="notice">After saving your panel design, use /ticket-panel in Discord to publish it. The panel's create button opens a private ticket with staff Claim and Close controls. Closing starts a five-second countdown before deletion.</div>';}
 if(page==="overview"){out+='<div class="modulegrid">'+d.cards.map(c=>'<div class="module" data-go="'+c[3]+'"><div>'+c[0]+'</div><h3>'+c[1]+'</h3><p>'+c[2]+'</p></div>').join("")+'</div><div class="notice">Storage note: this free starter currently uses temporary memory for warnings and dashboard sessions. Those records can reset when services restart. Do not rely on it for permanent moderation records yet.</div>';}
 if(d.commands){out+='<div class="commands">'+d.commands.map(c=>'<div class="command"><code>'+c[0]+'</code><small>'+c[1]+'</small></div>').join("")+'</div>';}
 if(d.steps){out+='<ol class="muted">'+d.steps.map(s=>'<li>'+s+'</li>').join("")+'</ol>';}
 if(page==="planned"){out+='<div class="modulegrid">'+d.cards.map(c=>'<div class="module"><div>'+c[0]+'</div><h3>'+c[1]+'</h3><span class="tag soon">'+c[2]+'</span></div>').join("")+'</div>';}
 $("pageBody").innerHTML=out;
 document.querySelectorAll("[data-go]").forEach(el=>el.addEventListener("click",()=>setPage(el.dataset.go)));
+const save=$("savePanel");if(save)save.addEventListener("click",async()=>{const body={panelTitle:$("panelTitle").value,panelDescription:$("panelDescription").value,buttonLabel:$("buttonLabel").value,color:$("panelColor").value.replace("#",""),staffRoleId:$("staffRoleId").value.trim()};const r=await fetch("/api/guild/"+selected+"/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(body)});$("savePanelMsg").textContent=r.ok?"Saved! Now run /ticket-panel in Discord to publish this design.":"Could not save. Check that you are signed in and have Manage Server.";});
 }
-function setPage(p){page=p;document.querySelectorAll(".side button[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===p));renderPage();}
+async function loadTicketSettings(){
+ if(!selected)return;
+ try{
+  const [sr,ar]=await Promise.all([fetch("/api/guild/"+selected+"/settings"),fetch("/api/guild/"+selected+"/analytics")]);
+  const cfg=await sr.json(),a=await ar.json();
+  const field=id=>$(id);
+  if(field("panelTitle"))field("panelTitle").value=cfg.panelTitle||"Support tickets";
+  if(field("panelDescription"))field("panelDescription").value=cfg.panelDescription||"Need help? Press below to open a private ticket.";
+  if(field("buttonLabel"))field("buttonLabel").value=cfg.buttonLabel||"Create ticket";
+  if(field("panelColor"))field("panelColor").value="#"+(cfg.color||"8278ff");
+  if(field("staffRoleId"))field("staffRoleId").value=cfg.staffRoleId||"";
+  if(field("ticketStats"))field("ticketStats").innerHTML='<div class="modulegrid"><div class="module"><h2>'+a.created+'</h2><p>Tickets created</p></div><div class="module"><h2>'+a.claimed+'</h2><p>Tickets claimed</p></div><div class="module"><h2>'+a.closed+'</h2><p>Tickets closed</p></div></div><p class="muted">Analytics are temporary in this free setup and reset when the website restarts.</p>';
+ }catch(e){console.error(e);}
+}
+function setPage(p){page=p;document.querySelectorAll(".side button[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===p));renderPage();if(p==="tickets")loadTicketSettings();}
 async function load(){
 try{const r=await fetch("/api/me");const d=await r.json();if(!d.user){$("dashboard").style.display="none";return;}user=d.user;guilds=d.guilds||[];$("home").style.display="none";$("dashboard").style.display="block";$("navLogin").textContent="Signed in: "+user.username;$("guildPick").innerHTML="";guilds.forEach(g=>{const o=document.createElement("option");o.value=g.id;o.textContent=g.name;$("guildPick").appendChild(o)});if(!guilds.length)$("pageBody").innerHTML='<p class="muted">No servers found where you have Manage Server or Administrator permission. Give your account the right server permission, then sign in again.</p>';else{selected=guilds[0].id;setPage("overview");}}
 catch(e){console.error(e);}}
-$("guildPick").addEventListener("change",e=>{selected=e.target.value;});
+$("guildPick").addEventListener("change",e=>{selected=e.target.value;if(page==="tickets")loadTicketSettings();});
 document.querySelectorAll(".side button[data-page]").forEach(b=>b.addEventListener("click",()=>setPage(b.dataset.page)));
 $("logout").addEventListener("click",async()=>{await fetch("/auth/logout",{method:"POST"});location.href="/";});
 load();
