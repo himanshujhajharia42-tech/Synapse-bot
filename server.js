@@ -50,7 +50,7 @@ app.put("/api/guild/:id/settings",(req,res)=>{
   panelDescription:String(b.panelDescription||"Need help? Press below to open a private ticket.").slice(0,1000),
   buttonLabel:String(b.buttonLabel||"Create ticket").slice(0,80),
   color:/^[0-9a-fA-F]{6}$/.test(String(b.color||""))?String(b.color):"8278ff",
-  staffRoleId:/^\\d{0,22}$/.test(String(b.staffRoleId||""))?String(b.staffRoleId):""
+  staffRoleId:/^\d{0,22}$/.test(String(b.staffRoleId||""))?String(b.staffRoleId):""
  };
  settings.set(req.params.id,clean);res.json({ok:true,storage:"temporary-memory",settings:clean});
 });
