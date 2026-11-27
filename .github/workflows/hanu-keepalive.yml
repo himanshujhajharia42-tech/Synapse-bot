@@ -1,0 +1,21 @@
+name: Keep HANU Discord bot awake
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping HANU health endpoint
+        run: |
+          curl --fail --silent --show-error --max-time 25 --retry 2 --retry-delay 3 \
+            https://hanu-discord-bot.onrender.com/ \
+            --output /tmp/hanu-health.json
+          cat /tmp/hanu-health.json
